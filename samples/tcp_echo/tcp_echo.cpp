@@ -37,6 +37,8 @@ class TCPEchoConnection final : public unetwork::TCPConnection {
 
   using Packet = std::vector<std::byte>;
 
+  // It is safe to push span between corutines as long as size of queue is 1 and push/pop blocking
+  // in other cases std::vector must be used in queue which will cause buffer allocation on every cycle
   using Queue = concurrent::NonFifoSpscQueue<std::span<std::byte>>;
   std::shared_ptr<Queue> queue;
 
