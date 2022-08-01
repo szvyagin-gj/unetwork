@@ -53,7 +53,9 @@ class TCPEchoConnection final : public unetwork::TCPConnection {
         size_t nread = socket.RecvSome(readData.data(),
                                        readData.size(), {});
         if (nread > 0) {
+#if defined(DEBUG)
           LOG_INFO() << fmt::format("{} bytes recieved", nread);
+#endif
           producer.Push(std::move(readData));
         } else if (nread == 0) {
           return;
@@ -75,7 +77,9 @@ class TCPEchoConnection final : public unetwork::TCPConnection {
         if (writeData.size() == 0) {
           break;
         } else {
+#if defined(DEBUG)
           LOG_INFO() << fmt::format("sending {} bytes", writeData.size());
+#endif
           [[maybe_unused]] auto sent =
               socket.SendAll(writeData.data(), writeData.size(), {});
         }

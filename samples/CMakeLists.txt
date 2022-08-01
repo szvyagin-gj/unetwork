@@ -5,8 +5,8 @@ macro(build_sample)
   target_link_libraries(${PROJECT_NAME} PRIVATE unetwork-lib)
 
   set(OUT_DIR ${CMAKE_SOURCE_DIR}/bin/${PROJECT_NAME})
-  message(${OUT_DIR})
   set_target_properties(${PROJECT_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${OUT_DIR})
+  target_compile_definitions(${PROJECT_NAME} PRIVATE "$<$<CONFIG:DEBUG>:DEBUG>")
   add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy
     ${PROJECT_SOURCE_DIR}/config_dev.yaml
