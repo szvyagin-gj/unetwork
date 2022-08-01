@@ -37,9 +37,7 @@ class TCPEchoConnection final : public unetwork::TCPConnection {
 
   using Packet = std::vector<std::byte>;
 
-  // It is safe to push span between corutines as long as size of queue is 1 and push/pop blocking
-  // in other cases std::vector must be used in queue which will cause buffer allocation on every cycle
-  using Queue = concurrent::NonFifoSpscQueue<std::span<std::byte>>;
+  using Queue = concurrent::NonFifoSpscQueue<std::vector<std::byte>>;
   std::shared_ptr<Queue> queue;
 
   void ReadTaskCoro(Queue::Producer& producer) {
@@ -49,14 +47,14 @@ class TCPEchoConnection final : public unetwork::TCPConnection {
     });
 
     Packet readData;
-    readData.resize(echoBufSize);
     while (!engine::current_task::ShouldCancel()) {
       try {
+        readData.resize(echoBufSize);
         size_t nread = socket.RecvSome(readData.data(),
                                        readData.size(), {});
         if (nread > 0) {
           LOG_INFO() << fmt::format("{} bytes recieved", nread);
-          producer.Push({readData.data(), nread});
+          producer.Push(std::move(readData));
         } else if (nread == 0) {
           return;
         }
@@ -69,10 +67,10 @@ class TCPEchoConnection final : public unetwork::TCPConnection {
   void WriteTaskCoro(Queue::Consumer& consumer) {
     utils::FastScopeGuard onExit(
         [&]() noexcept { LOG_INFO() << "Connection closed. Exit write coro"; });
-    std::span<std::byte> writeData;
+    Packet writeData;
     while (!engine::current_task::ShouldCancel()) {
       try {
-        if (!consumer.Pop(writeData, engine::Deadline::FromDuration(42ms)))
+        if (!consumer.Pop(writeData))
           continue;
         if (writeData.size() == 0) {
           break;
