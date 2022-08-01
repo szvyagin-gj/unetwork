@@ -17,6 +17,8 @@
 
 #include <unetwork/tcp_server.h>
 
+#include <span>
+
 using namespace userver;
 using namespace std::chrono_literals;
 
@@ -24,35 +26,35 @@ class TCPEchoConnection final : public unetwork::TCPConnection {
  public:
   using TCPConnection::TCPConnection;
 
+  TCPEchoConnection(userver::engine::io::Socket&& sock, size_t echo_buf_size)
+      : unetwork::TCPConnection(std::move(sock)), echoBufSize(echo_buf_size) {}
+
  private:
+  size_t echoBufSize;
+
   engine::Task readTask;
   engine::Task writeTask;
 
-  using Packet = std::array<std::byte, 32>;
+  using Packet = std::vector<std::byte>;
 
-  struct EchoData {
-    Packet storage;
-    size_t size;
-  };
-
-  using Queue = concurrent::NonFifoSpscQueue<EchoData>;
+  using Queue = concurrent::NonFifoSpscQueue<std::span<std::byte>>;
   std::shared_ptr<Queue> queue;
 
   void ReadTaskCoro(Queue::Producer& producer) {
     utils::FastScopeGuard closeQueue([&]() noexcept {
       LOG_INFO() << "Connection closed. Exit read coro";
-      producer.Push({{}, 0});
+      producer.Push({});
     });
 
-    EchoData readData;
+    Packet readData;
+    readData.resize(echoBufSize);
     while (!engine::current_task::ShouldCancel()) {
       try {
-        size_t nread = socket.RecvSome(readData.storage.data(),
-                                       readData.storage.size(), {});
+        size_t nread = socket.RecvSome(readData.data(),
+                                       readData.size(), {});
         if (nread > 0) {
           LOG_INFO() << fmt::format("{} bytes recieved", nread);
-          readData.size = nread;
-          producer.Push(std::move(readData));
+          producer.Push({readData.data(), nread});
         } else if (nread == 0) {
           return;
         }
@@ -65,17 +67,17 @@ class TCPEchoConnection final : public unetwork::TCPConnection {
   void WriteTaskCoro(Queue::Consumer& consumer) {
     utils::FastScopeGuard onExit(
         [&]() noexcept { LOG_INFO() << "Connection closed. Exit write coro"; });
-    EchoData writeData;
+    std::span<std::byte> writeData;
     while (!engine::current_task::ShouldCancel()) {
       try {
         if (!consumer.Pop(writeData, engine::Deadline::FromDuration(42ms)))
           continue;
-        if (writeData.size == 0) {
+        if (writeData.size() == 0) {
           break;
         } else {
-          LOG_INFO() << fmt::format("sending {} bytes", writeData.size);
+          LOG_INFO() << fmt::format("sending {} bytes", writeData.size());
           [[maybe_unused]] auto sent =
-              socket.SendAll(writeData.storage.data(), writeData.size, {});
+              socket.SendAll(writeData.data(), writeData.size(), {});
         }
       } catch (engine::io::IoException& e) {
         break;
@@ -111,14 +113,36 @@ class TCPEchoConnection final : public unetwork::TCPConnection {
   }
 };
 
+struct TCPEchoServerConfig : unetwork::TCPServerConfig {
+  size_t echoBufferSize = 32;
+};
+
+TCPEchoServerConfig Parse(const userver::yaml_config::YamlConfig& value,
+                      userver::formats::parse::To<TCPEchoServerConfig>)
+{
+  TCPEchoServerConfig config;
+  static_cast<unetwork::TCPServerConfig&>(config) = Parse(value, userver::formats::parse::To<unetwork::TCPServerConfig> {});
+
+  config.echoBufferSize = value["echo_buffer_size"].As<size_t>();
+  return config;
+}
+
 class TCPEchoServer final : public unetwork::TCPServer {
  public:
-  using unetwork::TCPServer::TCPServer;
+  TCPEchoServer(const TCPEchoServerConfig& config,
+                const userver::components::ComponentContext& component_context)
+      : unetwork::TCPServer(config, component_context),
+        echoBufferSize(config.echoBufferSize)
+  {
+    LOG_INFO() << "TCPEchoServer set echoBufferSize to " << echoBufferSize;
+  }
 
  private:
+  size_t echoBufferSize;
+
   std::shared_ptr<unetwork::TCPConnection> makeConnection(
       userver::engine::io::Socket&& s) override {
-    return std::make_shared<TCPEchoConnection>(std::move(s));
+    return std::make_shared<TCPEchoConnection>(std::move(s), echoBufferSize);
   }
 };
 
@@ -133,7 +157,7 @@ class TCPServerComponent final
       const userver::components::ComponentContext& component_context)
       : userver::components::LoggableComponentBase(component_config,
                                                    component_context),
-        server(component_config.As<unetwork::TCPServerConfig>(),
+        server(component_config.As<TCPEchoServerConfig>(),
                component_context) {}
 
   void OnAllComponentsAreStopping() override {
