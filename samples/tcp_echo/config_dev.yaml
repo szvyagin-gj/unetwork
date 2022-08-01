@@ -40,3 +40,4 @@ components_manager:
                 port: 8081            # ...to listen on this port and..
                 task_processor: main-task-processor    # ...process incoming requests on this task processor.
             clients_task_processor: fs-task-processor
+            echo_buffer_size: 256
