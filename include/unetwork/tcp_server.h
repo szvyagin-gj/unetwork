@@ -32,6 +32,9 @@ class TCPConnection {
   virtual void Stop() = 0;
 
   int Fd() const { return socket.Fd(); }
+  const userver::engine::io::Sockaddr& RemoteAddr() {
+    return socket.Getpeername();
+  }
 
  protected:
   userver::engine::io::Socket socket;

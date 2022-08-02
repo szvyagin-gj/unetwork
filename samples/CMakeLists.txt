@@ -19,3 +19,4 @@ macro(build_sample)
 endmacro()
 
 add_subdirectory(tcp_echo)
+add_subdirectory(http_hello)

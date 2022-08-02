@@ -16,25 +16,20 @@ namespace unetwork {
 TCPServerConfig Parse(const userver::yaml_config::YamlConfig& value,
                       userver::formats::parse::To<TCPServerConfig>) {
   TCPServerConfig config;
-  config.listener =
-      value["listener"].As<userver::server::net::ListenerConfig>();
-  config.clientsTaskProcessor =
-      value["clients_task_processor"].As<std::string>();
+  config.listener = value["listener"].As<userver::server::net::ListenerConfig>();
+  config.clientsTaskProcessor = value["clients_task_processor"].As<std::string>();
   return config;
 }
 
-TCPServer::TCPServer(
-    const TCPServerConfig& config,
-    const userver::components::ComponentContext& component_context) {
+TCPServer::TCPServer(const TCPServerConfig& config,
+                     const userver::components::ComponentContext& component_context) {
   listenerTask = userver::engine::CriticalAsyncNoSpan(
       component_context.GetTaskProcessor(config.listener.task_processor),
-      [this](userver::engine::io::Socket&& listen_sock,
-             userver::engine::TaskProcessor& cli_tp) {
+      [this](userver::engine::io::Socket&& listen_sock, userver::engine::TaskProcessor& cli_tp) {
         this->ServerRun(listen_sock, cli_tp);
       },
       userver::server::net::CreateSocket(config.listener),
-      std::ref(
-          component_context.GetTaskProcessor(config.clientsTaskProcessor)));
+      std::ref(component_context.GetTaskProcessor(config.clientsTaskProcessor)));
 }
 
 void TCPServer::ServerRun(userver::engine::io::Socket& listen_sock,
@@ -55,8 +50,7 @@ void TCPServer::Stop() {
     if (auto connSp = connWp.lock()) connSp->Stop();
 }
 
-void TCPServer::AcceptConnection(engine::io::Socket& listen_sock,
-                                 engine::TaskProcessor& cli_tp) {
+void TCPServer::AcceptConnection(engine::io::Socket& listen_sock, engine::TaskProcessor& cli_tp) {
   engine::io::Socket connSock = listen_sock.Accept({});
   connSock.SetOption(IPPROTO_TCP, TCP_NODELAY, 1);
   LOG_DEBUG() << "New connection " << fmt::to_string(connSock.Getsockname());
