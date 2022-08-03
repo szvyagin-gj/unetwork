@@ -8,13 +8,41 @@
 #include <exception>
 #include <span>
 #include <unordered_map>
+#include <functional>
+
+namespace unetwork::util {
+struct string_hash {
+  using hash_type = std::hash<std::string_view>;
+  using is_transparent = void;
+  size_t operator()(const char* str) const { return hash_type{}(str); }
+  size_t operator()(std::string_view str) const { return hash_type{}(str); }
+  size_t operator()(std::string const& str) const { return hash_type{}(str); }
+};
+
+template <typename T>
+using string_map = std::unordered_map<std::string, T, string_hash, std::equal_to<>>;
+}  // namespace unetwork::util
 
 namespace unetwork::http {
 
 using userver::server::http::HttpMethod;
 using userver::server::http::HttpStatus;
 
-using Headers = std::unordered_map<std::string, std::string>;
+struct HttpServerConfig : TCPServerConfig {
+  bool allow_encoding = true;
+};
+
+struct SimpleHttpServerConfig : HttpServerConfig {
+  std::string content_type = "text/plain";
+};
+
+HttpServerConfig Parse(const userver::yaml_config::YamlConfig& value,
+                       userver::formats::parse::To<HttpServerConfig>);
+
+SimpleHttpServerConfig Parse(const userver::yaml_config::YamlConfig& value,
+                             userver::formats::parse::To<SimpleHttpServerConfig>);
+
+using Headers = util::string_map<std::string>;
 
 struct Request {
   std::string url;
@@ -32,6 +60,8 @@ struct Response {
   std::string_view content_type;
 
   bool keepalive = false;
+
+  std::function<void()> post_send_cb;
 };
 
 struct HttpStatusException : public std::exception {

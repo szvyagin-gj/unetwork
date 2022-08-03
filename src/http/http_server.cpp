@@ -215,6 +215,8 @@ class HttpConnection::HttpConnectionImpl {
           serialize_response(response, curRequest, handler->config.allow_encoding);
       [[maybe_unused]] auto s = socket.SendAll(respData.data(), respData.size(), {});
       if (!response.keepalive) socket.Close();
+      if (response.post_send_cb)
+        response.post_send_cb();
     }
   }
 
