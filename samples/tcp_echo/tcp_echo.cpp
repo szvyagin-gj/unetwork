@@ -56,6 +56,7 @@ class TCPEchoConnection final : public unetwork::TCPConnection {
 #if defined(DEBUG)
           LOG_INFO() << fmt::format("{} bytes recieved", nread);
 #endif
+          readData.resize(nread);
           producer.Push(std::move(readData));
         } else if (nread == 0) {
           return;
