@@ -1,4 +1,5 @@
 #include <unetwork/http_server.h>
+#include <userver/components/component.hpp>
 #include <userver/concurrent/queue.hpp>
 #include <userver/logging/log.hpp>
 #include <userver/utils/async.hpp>
@@ -13,18 +14,16 @@ namespace unetwork::http {
 
 using namespace userver;
 
-HttpServerConfig Parse(const userver::yaml_config::YamlConfig& value,
-                       userver::formats::parse::To<HttpServerConfig>) {
-  HttpServerConfig config;
-  ParseAs<TCPServerConfig>(config, value);
+static HttpServer::Config Parse(const userver::yaml_config::YamlConfig& value,
+                                userver::formats::parse::To<HttpServer::Config>) {
+  HttpServer::Config config;
   config.allow_encoding = value["allow_encoding"].As<bool>();
   return config;
 }
 
-SimpleHttpServerConfig Parse(const userver::yaml_config::YamlConfig& value,
-                             userver::formats::parse::To<SimpleHttpServerConfig>) {
-  SimpleHttpServerConfig config;
-  ParseAs<HttpServerConfig>(config, value);
+static SimpleHttpServer::Config Parse(const userver::yaml_config::YamlConfig& value,
+                                      userver::formats::parse::To<SimpleHttpServer::Config>) {
+  SimpleHttpServer::Config config;
   config.content_type = value["content_type"].As<std::string>();
   return config;
 }
@@ -213,7 +212,7 @@ class HttpConnection::HttpConnectionImpl {
       socket.Close();
     } else {
       std::vector<std::byte> respData =
-          serialize_response(response, curRequest, handler->allow_encoding);
+          serialize_response(response, curRequest, handler->config.allow_encoding);
       [[maybe_unused]] auto s = socket.SendAll(respData.data(), respData.size(), {});
       if (!response.keepalive) socket.Close();
     }
@@ -294,6 +293,10 @@ userver::engine::io::Socket HttpConnection::Detach() {
   return {};
 }
 
+HttpServer::HttpServer(const ComponentConfig& component_config,
+                       const ComponentContext& component_context)
+    : TCPServer(component_config, component_context), config(component_config.As<Config>()) {}
+
 std::shared_ptr<TCPConnection> HttpServer::makeConnection(engine::io::Socket&& socket) {
   return std::make_shared<HttpConnection>(std::move(socket), this);
 }
@@ -305,5 +308,9 @@ void HttpServer::SetOperationMode(HttpServer::OperationMode opmode) {
   LOG_INFO() << "Http server operation mode changed to "
              << (opmode == OperationMode::Throttled ? "throttled" : "normal");
 }
+
+SimpleHttpServer::SimpleHttpServer(const ComponentConfig& component_config,
+                                   const ComponentContext& component_context)
+    : HttpServer(component_config, component_context), config(component_config.As<Config>()) {}
 
 }  // namespace unetwork::http

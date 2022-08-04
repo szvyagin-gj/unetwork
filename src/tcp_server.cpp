@@ -13,23 +13,24 @@
 using namespace userver;
 namespace unetwork {
 
-TCPServerConfig Parse(const userver::yaml_config::YamlConfig& value,
-                      userver::formats::parse::To<TCPServerConfig>) {
-  TCPServerConfig config;
+static TCPServer::Config Parse(const userver::yaml_config::YamlConfig& value,
+                        userver::formats::parse::To<TCPServer::Config>) {
+  TCPServer::Config config;
   config.listener = value["listener"].As<userver::server::net::ListenerConfig>();
-  config.clientsTaskProcessor = value["clients_task_processor"].As<std::string>();
+  config.clients_task_processor = value["clients_task_processor"].As<std::string>();
   return config;
 }
 
-TCPServer::TCPServer(const TCPServerConfig& config,
-                     const userver::components::ComponentContext& component_context) {
+TCPServer::TCPServer(const ComponentConfig& component_config,
+                     const ComponentContext& component_context)
+    : config(component_config.As<TCPServer::Config>()) {
   listenerTask = userver::engine::CriticalAsyncNoSpan(
       component_context.GetTaskProcessor(config.listener.task_processor),
       [this](userver::engine::io::Socket&& listen_sock, userver::engine::TaskProcessor& cli_tp) {
         this->ServerRun(listen_sock, cli_tp);
       },
       userver::server::net::CreateSocket(config.listener),
-      std::ref(component_context.GetTaskProcessor(config.clientsTaskProcessor)));
+      std::ref(component_context.GetTaskProcessor(config.clients_task_processor)));
 }
 
 void TCPServer::ServerRun(userver::engine::io::Socket& listen_sock,

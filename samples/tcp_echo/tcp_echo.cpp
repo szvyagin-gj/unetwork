@@ -117,38 +117,36 @@ class TCPEchoConnection final : public unetwork::TCPConnection {
   }
 };
 
-struct TCPEchoServerConfig : unetwork::TCPServerConfig {
-  size_t echoBufferSize = 32;
+class TCPEchoServer final : public unetwork::TCPServer {
+ public:
+  struct Config {
+    size_t echoBufferSize = 32;
+  };
+
+  TCPEchoServer(const unetwork::ComponentConfig& component_config,
+                const unetwork::ComponentContext& component_context);
+
+ private:
+  Config config;
+
+  std::shared_ptr<unetwork::TCPConnection> makeConnection(
+      userver::engine::io::Socket&& s) override {
+    return std::make_shared<TCPEchoConnection>(std::move(s), config.echoBufferSize);
+  }
 };
 
-TCPEchoServerConfig Parse(const userver::yaml_config::YamlConfig& value,
-                      userver::formats::parse::To<TCPEchoServerConfig>)
+TCPEchoServer::Config Parse(const userver::yaml_config::YamlConfig& value,
+                      userver::formats::parse::To<TCPEchoServer::Config>)
 {
-  TCPEchoServerConfig config;
-  static_cast<unetwork::TCPServerConfig&>(config) = Parse(value, userver::formats::parse::To<unetwork::TCPServerConfig> {});
-
+  TCPEchoServer::Config config;
   config.echoBufferSize = value["echo_buffer_size"].As<size_t>();
   return config;
 }
 
-class TCPEchoServer final : public unetwork::TCPServer {
- public:
-  TCPEchoServer(const TCPEchoServerConfig& config,
-                const userver::components::ComponentContext& component_context)
-      : unetwork::TCPServer(config, component_context),
-        echoBufferSize(config.echoBufferSize)
-  {
-    LOG_INFO() << "TCPEchoServer set echoBufferSize to " << echoBufferSize;
-  }
-
- private:
-  size_t echoBufferSize;
-
-  std::shared_ptr<unetwork::TCPConnection> makeConnection(
-      userver::engine::io::Socket&& s) override {
-    return std::make_shared<TCPEchoConnection>(std::move(s), echoBufferSize);
-  }
-};
+TCPEchoServer::TCPEchoServer(const unetwork::ComponentConfig& component_config,
+                             const unetwork::ComponentContext& component_context)
+    : unetwork::TCPServer(component_config, component_context),
+      config(component_config.As<TCPEchoServer::Config>()) {}
 
 class TCPServerComponent final
     : public userver::components::LoggableComponentBase {
@@ -161,7 +159,7 @@ class TCPServerComponent final
       const userver::components::ComponentContext& component_context)
       : userver::components::LoggableComponentBase(component_config,
                                                    component_context),
-        server(component_config.As<TCPEchoServerConfig>(),
+        server(component_config,
                component_context) {}
 
   void OnAllComponentsAreStopping() override {
@@ -169,6 +167,7 @@ class TCPServerComponent final
     server.Stop();
   }
 };
+
 
 int main(int argc, char* argv[]) {
   auto component_list = components::ComponentList()

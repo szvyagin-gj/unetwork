@@ -13,13 +13,8 @@
 
 namespace unetwork {
 
-struct TCPServerConfig {
-  userver::server::net::ListenerConfig listener;
-  std::string clientsTaskProcessor;
-};
-
-TCPServerConfig Parse(const userver::yaml_config::YamlConfig& value,
-                      userver::formats::parse::To<TCPServerConfig>);
+using userver::components::ComponentConfig;
+using userver::components::ComponentContext;
 
 class TCPConnection {
  public:
@@ -42,22 +37,25 @@ class TCPConnection {
 
 class TCPServer {
  public:
-  TCPServer(const TCPServerConfig& config,
-            const userver::components::ComponentContext& component_context);
+  struct Config {
+    userver::server::net::ListenerConfig listener;
+    std::string clients_task_processor;
+  };
+
+  TCPServer(const ComponentConfig& component_config, const ComponentContext& component_context);
   void Stop();
 
  private:
+  Config config;
   userver::engine::Task listenerTask;
   std::vector<std::weak_ptr<TCPConnection>> connections;
 
   void AcceptConnection(userver::engine::io::Socket& listen_sock,
                         userver::engine::TaskProcessor& cli_tp);
 
-  void ServerRun(userver::engine::io::Socket& listen_sock,
-                 userver::engine::TaskProcessor& cli_tp);
+  void ServerRun(userver::engine::io::Socket& listen_sock, userver::engine::TaskProcessor& cli_tp);
 
-  virtual std::shared_ptr<TCPConnection> makeConnection(
-      userver::engine::io::Socket&&) = 0;
+  virtual std::shared_ptr<TCPConnection> makeConnection(userver::engine::io::Socket&&) = 0;
 
  protected:
   virtual void onNewConnection(std::shared_ptr<TCPConnection>& connection);

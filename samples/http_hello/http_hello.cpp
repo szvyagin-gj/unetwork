@@ -22,8 +22,7 @@ class HelloServiceComponent final : public userver::components::LoggableComponen
   HelloServiceComponent(const userver::components::ComponentConfig& component_config,
                         const userver::components::ComponentContext& component_context)
       : userver::components::LoggableComponentBase(component_config, component_context),
-        unetwork::http::SimpleHttpServer(
-            component_config.As<unetwork::http::SimpleHttpServerConfig>(), component_context) {
+        unetwork::http::SimpleHttpServer(component_config, component_context) {
     //SetOperationMode(unetwork::http::HttpServer::OperationMode::Normal);
   }
 

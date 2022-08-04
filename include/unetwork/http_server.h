@@ -14,20 +14,6 @@ namespace unetwork::http {
 using userver::server::http::HttpMethod;
 using userver::server::http::HttpStatus;
 
-struct HttpServerConfig : TCPServerConfig {
-  bool allow_encoding = true;
-};
-
-struct SimpleHttpServerConfig : HttpServerConfig {
-  std::string content_type = "text/plain";
-};
-
-HttpServerConfig Parse(const userver::yaml_config::YamlConfig& value,
-                       userver::formats::parse::To<HttpServerConfig>);
-
-SimpleHttpServerConfig Parse(const userver::yaml_config::YamlConfig& value,
-                             userver::formats::parse::To<SimpleHttpServerConfig>);
-
 using Headers = std::unordered_map<std::string, std::string>;
 
 struct Request {
@@ -72,11 +58,12 @@ class HttpConnection final : public TCPConnection {
 };
 
 class HttpServer : public TCPServer {
-
  public:
-  HttpServer(const HttpServerConfig& config,
-             const userver::components::ComponentContext& component_context)
-      : TCPServer(config, component_context), allow_encoding(config.allow_encoding) {}
+  struct Config {
+    bool allow_encoding = true;
+  };
+
+  HttpServer(const ComponentConfig& component_config, const ComponentContext& component_context);
 
   ~HttpServer() {
     // Connections can't operate without http sever and must be stopped.
@@ -98,16 +85,19 @@ class HttpServer : public TCPServer {
  private:
   std::shared_ptr<TCPConnection> makeConnection(userver::engine::io::Socket&&) override;
 
-  bool allow_encoding;
+  Config config;
   std::atomic<OperationMode> operation_mode = OperationMode::Normal;
   friend class HttpConnection::HttpConnectionImpl;
 };
 
 class SimpleHttpServer : public HttpServer {
  public:
-  SimpleHttpServer(const SimpleHttpServerConfig& config,
-                   const userver::components::ComponentContext& component_context)
-      : HttpServer(config, component_context), content_type(config.content_type) {}
+  struct Config {
+    std::string content_type = "text/plain";
+  };
+
+  SimpleHttpServer(const ComponentConfig& component_config,
+                   const ComponentContext& component_context);
 
  protected:
   virtual std::string OnRequest(const Request& request) = 0;
@@ -119,11 +109,11 @@ class SimpleHttpServer : public HttpServer {
     resp.keepalive = request.keepalive;
     resp.content.insert(resp.content.end(), (const std::byte*)respBody.data(),
                         (const std::byte*)(respBody.data() + respBody.size()));
-    resp.content_type = content_type;
+    resp.content_type = config.content_type;
     return resp;
   }
 
-  std::string content_type;
+  Config config;
 };
 
 }  // namespace unetwork::http
