@@ -37,7 +37,7 @@ class TCPEchoConnection final : public unetwork::TCPConnection {
 
   using Packet = std::vector<std::byte>;
 
-  using Queue = concurrent::NonFifoSpscQueue<std::vector<std::byte>>;
+  using Queue = concurrent::SpscQueue<std::vector<std::byte>>;
   std::shared_ptr<Queue> queue;
 
   void ReadTaskCoro(Queue::Producer& producer) {
