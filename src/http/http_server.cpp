@@ -208,12 +208,10 @@ class HttpConnection::HttpConnectionImpl {
 
     if (errorStatus.has_value()) {
       std::vector<char> respData = status_response(errorStatus.value());
-      [[maybe_unused]] auto s = socket.SendAll(respData.data(), respData.size(), {});
+      SendExactly(socket, std::as_bytes(std::span(respData)), {});
       socket.Close();
     } else {
-      std::vector<std::byte> respData =
-          serialize_response(response, curRequest, handler->config.allow_encoding);
-      [[maybe_unused]] auto s = socket.SendAll(respData.data(), respData.size(), {});
+      SendExactly(socket, serialize_response(response, curRequest, handler->config.allow_encoding), {});
       if (!response.keepalive) socket.Close();
       if (response.post_send_cb)
         response.post_send_cb();
@@ -254,7 +252,7 @@ class HttpConnection::HttpConnectionImpl {
   }
 
  public:
-  HttpConnectionImpl(HttpServer* server) : handler(server) {}
+  HttpConnectionImpl(HttpServer* server, HttpConnection* conn_interface) : handler(server), connection(conn_interface) {}
 
   void Start(engine::TaskProcessor& tp, std::shared_ptr<TCPConnection> self,
              engine::io::Socket& socket) {
@@ -276,7 +274,7 @@ class HttpConnection::HttpConnectionImpl {
 };
 
 HttpConnection::HttpConnection(engine::io::Socket&& conn_sock, HttpServer* owner)
-    : TCPConnection(std::move(conn_sock)), impl(new HttpConnectionImpl(owner)) {}
+    : TCPConnection(std::move(conn_sock)), impl(new HttpConnectionImpl(owner, this)) {}
 
 void HttpConnection::Start(engine::TaskProcessor& tp, std::shared_ptr<TCPConnection> self) {
   assert(socket.IsValid());
@@ -289,7 +287,7 @@ userver::engine::io::Socket HttpConnection::Detach() {
   // connection lifetime controlled by shared_ptr owned by coroutine.
   // when coroutine stops connection is destroyed
   if (auto lock = impl->selfWeak.lock()) {
-    impl->SyncStop();
+    impl->Stop();
     return std::move(socket);
   }
   return {};

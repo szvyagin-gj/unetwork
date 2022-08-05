@@ -28,20 +28,6 @@ namespace unetwork::http {
 using userver::server::http::HttpMethod;
 using userver::server::http::HttpStatus;
 
-struct HttpServerConfig : TCPServerConfig {
-  bool allow_encoding = true;
-};
-
-struct SimpleHttpServerConfig : HttpServerConfig {
-  std::string content_type = "text/plain";
-};
-
-HttpServerConfig Parse(const userver::yaml_config::YamlConfig& value,
-                       userver::formats::parse::To<HttpServerConfig>);
-
-SimpleHttpServerConfig Parse(const userver::yaml_config::YamlConfig& value,
-                             userver::formats::parse::To<SimpleHttpServerConfig>);
-
 using Headers = util::string_map<std::string>;
 
 struct Request {
