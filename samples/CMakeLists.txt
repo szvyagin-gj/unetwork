@@ -20,3 +20,4 @@ endmacro()
 
 add_subdirectory(tcp_echo)
 add_subdirectory(http_hello)
+add_subdirectory(ws_echo)
