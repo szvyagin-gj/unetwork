@@ -4,20 +4,40 @@
 #include <userver/logging/log.hpp>
 #include <userver/utils/async.hpp>
 #include <userver/utils/fast_scope_guard.hpp>
+#include <userver/engine/io/tls_wrapper.hpp>
+#include <userver/fs/blocking/read.hpp>
 
 #include <http_parser.h>
 
 #include <http/content_encoder.h>
 #include <utils.h>
 
+#include <unetwork/io_wrapper.h>
+
 namespace unetwork::http {
 
 using namespace userver;
+
+static HttpServer::Config::TlsConfig Parse(
+    const userver::yaml_config::YamlConfig& value,
+    userver::formats::parse::To<HttpServer::Config::TlsConfig>) {
+  HttpServer::Config::TlsConfig config;
+
+  std::string certfile = value["certfile"].As<std::string>();
+  std::string keyfile = value["keyfile"].As<std::string>();
+  config.cert =
+      userver::crypto::Certificate::LoadFromString(fs::blocking::ReadFileContents(certfile));
+  config.key = userver::crypto::PrivateKey::LoadFromString(fs::blocking::ReadFileContents(keyfile));
+
+  return config;
+}
 
 static HttpServer::Config Parse(const userver::yaml_config::YamlConfig& value,
                                 userver::formats::parse::To<HttpServer::Config>) {
   HttpServer::Config config;
   config.allow_encoding = value["allow_encoding"].As<bool>();
+  if (value.HasMember("tls"))
+    config.tls = value["tls"].As<HttpServer::Config::TlsConfig>();
   return config;
 }
 
@@ -191,7 +211,7 @@ class HttpConnection::HttpConnectionImpl {
   engine::Task readTask;
   ParserState parserState;
 
-  void OnRequest(engine::io::Socket& socket) {
+  void OnRequest(std::unique_ptr<IoBase>& io) {
     Response response;
     std::optional<HttpStatus> errorStatus;
 
@@ -208,26 +228,26 @@ class HttpConnection::HttpConnectionImpl {
 
     if (errorStatus.has_value()) {
       std::vector<char> respData = status_response(errorStatus.value());
-      SendExactly(socket, std::as_bytes(std::span(respData)), {});
-      socket.Close();
+      SendExactly(io.get(), std::as_bytes(std::span(respData)), {});
+      io->Close();
     } else {
-      SendExactly(socket, serialize_response(response, curRequest, handler->config.allow_encoding), {});
-      if (!response.keepalive) socket.Close();
+      SendExactly(io.get(), serialize_response(response, curRequest, handler->config.allow_encoding), {});
+      if (!response.keepalive) io->Close();
       if (response.post_send_cb)
         response.post_send_cb();
     }
   }
 
-  void ReadTaskCoro(engine::io::Socket& socket) {
+  void ReadTaskCoro() {
     std::array<std::byte, 512> buf;
 
     try {
       while (!engine::current_task::ShouldCancel()) {
-        size_t nread = socket.RecvSome(buf.data(), buf.size(), {});
+        size_t nread = io->ReadSome(buf.data(), buf.size(), {});
         if (nread > 0) {
           if (handler->operation_mode == HttpServer::OperationMode::Throttled) {
             [[maybe_unused]] auto s =
-                socket.SendAll(throttled_answer.data(), throttled_answer.size(), {});
+                io->SendAll(throttled_answer.data(), throttled_answer.size(), {});
             return;
           }
 
@@ -240,7 +260,7 @@ class HttpConnection::HttpConnectionImpl {
           }
 
           if (parserState.complete) {
-            OnRequest(socket);
+            OnRequest(io);
             parserState.complete = false;
           }
 
@@ -255,10 +275,25 @@ class HttpConnection::HttpConnectionImpl {
   HttpConnectionImpl(HttpServer* server, HttpConnection* conn_interface) : handler(server), connection(conn_interface) {}
 
   void Start(engine::TaskProcessor& tp, std::shared_ptr<TCPConnection> self,
-             engine::io::Socket& socket) {
-    readTask = utils::Async(tp, "http-connection", [self, this, &socket] {
+             engine::io::Socket&& socket) {
+
+    if (!handler->config.tls.has_value())
+      io = std::make_unique<SocketWrapper>(std::move(socket));
+    else
+    {
+      auto const& tlsConf = handler->config.tls.value();
+      try {
+        io = std::make_unique<TlsWrapper>(std::move(socket), tlsConf.cert, tlsConf.key,
+                                          engine::Deadline{},
+                                          std::vector<userver::crypto::Certificate>{});
+      } catch (engine::io::TlsException& e) {
+        throw DenyTCPConnection(e.what());
+      }
+    }
+
+    readTask = utils::Async(tp, "http-connection", [self, this]() mutable {
       utils::FastScopeGuard cleanup([this]() noexcept { std::move(this->readTask).Detach(); });
-      this->ReadTaskCoro(socket);
+      this->ReadTaskCoro();
     });
     selfWeak = self;
   }
@@ -270,6 +305,7 @@ class HttpConnection::HttpConnectionImpl {
     readTask.BlockingWait();
   }
 
+  std::unique_ptr<unetwork::IoBase> io;
   std::weak_ptr<TCPConnection> selfWeak;
 };
 
@@ -278,17 +314,17 @@ HttpConnection::HttpConnection(engine::io::Socket&& conn_sock, HttpServer* owner
 
 void HttpConnection::Start(engine::TaskProcessor& tp, std::shared_ptr<TCPConnection> self) {
   assert(socket.IsValid());
-  impl->Start(tp, self, socket);
+  impl->Start(tp, self, std::move(socket));
 }
 
 void HttpConnection::Stop() { impl->Stop(); }
 
-userver::engine::io::Socket HttpConnection::Detach() {
+std::unique_ptr<IoBase> HttpConnection::Release() {
   // connection lifetime controlled by shared_ptr owned by coroutine.
   // when coroutine stops connection is destroyed
   if (auto lock = impl->selfWeak.lock()) {
     impl->Stop();
-    return std::move(socket);
+    return std::move(impl->io);
   }
   return {};
 }

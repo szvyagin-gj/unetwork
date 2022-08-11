@@ -36,7 +36,7 @@ class WebSocketConnection {
   virtual void Send(Message&& message) = 0;
   virtual void Close(CloseStatusInt status_code) = 0;
 
-  virtual const userver::engine::io::Sockaddr& RemoteAddr() = 0;
+  virtual const userver::engine::io::Sockaddr& RemoteAddr() const = 0;
   virtual const http::Headers& HandshakeHTTPHeaders() const = 0;
 };
 

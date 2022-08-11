@@ -1,20 +1,20 @@
 #pragma once
 #include <span>
-#include <userver/engine/io/socket.hpp>
 #include <userver/yaml_config/yaml_config.hpp>
 #include <unetwork/http_server.h>
+#include <unetwork/io_wrapper.h>
 
 namespace unetwork {
 
-inline void SendExactly(userver::engine::io::Socket& socket, std::span<const std::byte> data,
+inline void SendExactly(IoBase* io, std::span<const std::byte> data,
                         userver::engine::Deadline deadline) {
-  if (socket.SendAll(data.data(), data.size(), deadline) != data.size())
+  if (io->SendAll(data.data(), data.size(), deadline) != data.size())
     throw(userver::engine::io::IoException() << "Socket closed during transfer ");
 }
 
-inline void RecvExactly(userver::engine::io::Socket& socket, std::span<std::byte> buffer,
+inline void RecvExactly(IoBase* io, std::span<std::byte> buffer,
                         userver::engine::Deadline deadline) {
-  if (socket.RecvAll(buffer.data(), buffer.size(), deadline) != buffer.size())
+  if (io->ReadAll(buffer.data(), buffer.size(), deadline) != buffer.size())
     throw(userver::engine::io::IoException() << "Socket closed during transfer ");
 }
 

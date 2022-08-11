@@ -157,10 +157,10 @@ std::string WebsocketSecAnswer(std::string_view sec_key) {
       std::string_view((const char*)webSocketRespKeySHA1, 20));
 }
 
-CloseStatusInt ReadWSFrame(FrameParserState& frame, userver::engine::io::Socket& socket,
+CloseStatusInt ReadWSFrame(FrameParserState& frame, IoBase* io,
                            unsigned max_payload_size) {
   WSHeader hdr;
-  RecvExactly(socket, std::as_writable_bytes(std::span{&hdr, 1}), {});
+  RecvExactly(io, std::as_writable_bytes(std::span{&hdr, 1}), {});
   if (userver::engine::current_task::ShouldCancel()) return (CloseStatusInt)CloseStatus::kGoingAway;
 
   const bool isDataFrame = (hdr.bits.opcode & (TEXT | BINARY)) || hdr.bits.opcode == CONTINUATION;
@@ -169,12 +169,12 @@ CloseStatusInt ReadWSFrame(FrameParserState& frame, userver::engine::io::Socket&
     payloadLen = hdr.bits.payloadLen;
   } else if (hdr.bits.payloadLen == 126) {
     uint16_t payloadLen16;
-    RecvExactly(socket, std::as_writable_bytes(std::span{&payloadLen16, 1}), {});
+    RecvExactly(io, std::as_writable_bytes(std::span{&payloadLen16, 1}), {});
     payloadLen = be16toh(payloadLen16);
   } else  // if (hdr.payloadLen == 127)
   {
     uint64_t payloadLen64;
-    RecvExactly(socket, std::as_writable_bytes(std::span{&payloadLen64, 1}), {});
+    RecvExactly(io, std::as_writable_bytes(std::span{&payloadLen64, 1}), {});
     payloadLen = be64toh(payloadLen64);
   }
   if (userver::engine::current_task::ShouldCancel()) return (CloseStatusInt)CloseStatus::kGoingAway;
@@ -188,7 +188,7 @@ CloseStatusInt ReadWSFrame(FrameParserState& frame, userver::engine::io::Socket&
     return (CloseStatusInt)CloseStatus::kTooBigData;
 
   Mask32 mask;
-  if (hdr.bits.mask) RecvExactly(socket, std::as_writable_bytes(std::span{&mask, 1}), {});
+  if (hdr.bits.mask) RecvExactly(io, std::as_writable_bytes(std::span{&mask, 1}), {});
   if (userver::engine::current_task::ShouldCancel()) return (CloseStatusInt)CloseStatus::kGoingAway;
 
   if (payloadLen > 0) {
@@ -201,7 +201,7 @@ CloseStatusInt ReadWSFrame(FrameParserState& frame, userver::engine::io::Socket&
 
     size_t newPayloadOffset = frame.payload.size();
     frame.payload.resize(frame.payload.size() + payloadLen);
-    RecvExactly(socket, std::span{frame.payload.data() + newPayloadOffset, payloadLen}, {});
+    RecvExactly(io, std::span{frame.payload.data() + newPayloadOffset, payloadLen}, {});
     if (userver::engine::current_task::ShouldCancel())
       return (CloseStatusInt)CloseStatus::kGoingAway;
 

@@ -36,9 +36,12 @@ components_manager:
             service-name: 'tcp-echo' # "You know. You all know exactly who I am. Say my name. " (c)
 
         http-hello-server:
+            tls:
+              certfile: 'server.crt'
+              keyfile: 'server.key'
             listener:                 # configuring the main listening socket...
                 port: 8080            # ...to listen on this port and..
                 task_processor: main-task-processor    # ...process incoming requests on this task processor.
-            clients_task_processor: fs-task-processor
+            clients_task_processor: main-task-processor
             allow_encoding: true
             content_type: 'text/plain'

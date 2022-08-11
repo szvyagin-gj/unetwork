@@ -33,11 +33,14 @@ components_manager:
             fallback-path: 'dynamic_config_fallback.json'
 
         tracer:                              # Component that helps to trace execution times and requests in logs.
-            service-name: 'tcp-echo' # "You know. You all know exactly who I am. Say my name. " (c)
+            service-name: 'ws-echo' # "You know. You all know exactly who I am. Say my name. " (c)
 
         ws-echo-server:
+            tls:
+              certfile: 'server.crt'
+              keyfile: 'server.key'
             listener:                 # configuring the main listening socket...
                 port: 8080            # ...to listen on this port and..
                 task_processor: main-task-processor    # ...process incoming requests on this task processor.
-            clients_task_processor: fs-task-processor
+            clients_task_processor: main-task-processor
             allow_encoding: false

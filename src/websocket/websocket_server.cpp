@@ -29,7 +29,7 @@ static Message DataMessage(std::vector<std::byte>&& payload, bool is_text) {
 
 class WebSocketConnectionImpl : public WebSocketConnection {
  private:
-  userver::engine::io::Socket socket;
+  std::unique_ptr<IoBase> io;
 
   struct MessageExtended : Message {
     bool ping = false;
@@ -43,22 +43,25 @@ class WebSocketConnectionImpl : public WebSocketConnection {
   userver::engine::Task readTask;
   userver::engine::Task writeTask;
   http::Headers headers;
+  const engine::io::Sockaddr remoteAddr;
 
   WebSocketServer::Config config;
 
  public:
-  WebSocketConnectionImpl(userver::engine::io::Socket conn_sock, http::Headers&& h,
+  WebSocketConnectionImpl(std::unique_ptr<IoBase> io_, http::Headers&& h,
+                          engine::io::Sockaddr&& remote_addr,
                           const WebSocketServer::Config& server_config)
-      : socket(std::move(conn_sock)),
+      : io(std::move(io_)),
         inbox(InboxMessageQueue::Create(3)),
         outbox(OutboxMessageQueue::Create(3)),
         outboxProducer(outbox->GetMultiProducer()),
         headers(std::move(h)),
+        remoteAddr(std::move(remote_addr)),
         config(server_config) {}
 
   ~WebSocketConnectionImpl()
   {
-    if (config.debug_logging) LOG_DEBUG() << __FUNCTION__;
+    if (config.debug_logging) LOG_DEBUG() << "Websocket connection closed";
   }
 
   void ReadTaskCoro() {
@@ -68,7 +71,7 @@ class WebSocketConnectionImpl : public WebSocketConnection {
     InboxMessageQueue::Producer producer = inbox->GetProducer();
     try {
       while (!userver::engine::current_task::ShouldCancel()) {
-        CloseStatusInt status = ReadWSFrame(frame, socket, config.max_remote_payload);
+        CloseStatusInt status = ReadWSFrame(frame, io.get(), config.max_remote_payload);
         if (config.debug_logging)
           LOG_DEBUG() << fmt::format(
               "Read frame isText {}, closed {}, data size {} status {} waitCont {}", frame.isText,
@@ -112,23 +115,23 @@ class WebSocketConnectionImpl : public WebSocketConnection {
         MessageExtended& message = *messagePtr;
         if (config.debug_logging) LOG_DEBUG() << "Write message " << message.data.size() << " bytes";
         if (message.ping) {
-          SendExactly(socket, frames::PingFrame(), {});
+          SendExactly(io.get(), frames::PingFrame(), {});
         } else if (message.pong) {
-          SendExactly(socket, frames::PongFrame(), {});
+          SendExactly(io.get(), frames::PongFrame(), {});
         } else if (message.remoteCloseStatus.has_value()) {
-          SendExactly(socket, frames::CloseFrame(message.remoteCloseStatus.value()), {});
+          SendExactly(io.get(), frames::CloseFrame(message.remoteCloseStatus.value()), {});
         } else if (!message.data.empty()) {
           std::span<const std::byte> dataToSend = message.data;
           bool firstFrame = true;
           while (dataToSend.size() > config.fragment_size && config.fragment_size > 0) {
-            SendExactly(socket,
+            SendExactly(io.get(),
                         frames::DataFrame(dataToSend.first(config.fragment_size), message.isText,
                                    !firstFrame, false),
                         {});
             firstFrame = false;
             dataToSend = dataToSend.last(dataToSend.size() - config.fragment_size);
           }
-          SendExactly(socket, frames::DataFrame(dataToSend, message.isText, !firstFrame, true), {});
+          SendExactly(io.get(), frames::DataFrame(dataToSend, message.isText, !firstFrame, true), {});
         }
       }
     }
@@ -170,7 +173,10 @@ class WebSocketConnectionImpl : public WebSocketConnection {
 
   void Close(CloseStatusInt status_code) override { Send(CloseMessage(status_code)); }
 
-  const userver::engine::io::Sockaddr& RemoteAddr() override { return socket.Getpeername(); }
+  const userver::engine::io::Sockaddr& RemoteAddr() const override
+  {
+    return remoteAddr;
+  }
 
   const http::Headers& HandshakeHTTPHeaders() const override { return headers; }
 };
@@ -181,8 +187,9 @@ WebSocketServer::WebSocketServer(const ComponentConfig& component_config,
       config(component_config.As<Config>()) {}
 
 void WebSocketServer::UpgradeConnection(http::HttpConnection* connection, http::Headers&& headers) {
-  std::shared_ptr<WebSocketConnectionImpl> wsConnection =
-      std::make_shared<WebSocketConnectionImpl>(connection->Detach(), std::move(headers), config);
+  engine::io::Sockaddr remoteAddr = connection->RemoteAddr();
+  std::shared_ptr<WebSocketConnectionImpl> wsConnection = std::make_shared<WebSocketConnectionImpl>(
+      connection->Release(), std::move(headers), std::move(remoteAddr), config);
   wsConnection->Start(wsConnection);
   onNewWSConnection(wsConnection);
 }

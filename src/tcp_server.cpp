@@ -38,7 +38,9 @@ void TCPServer::ServerRun(userver::engine::io::Socket& listen_sock,
   while (!userver::engine::current_task::ShouldCancel()) {
     try {
       AcceptConnection(listen_sock, cli_tp);
-    } catch (const userver::engine::io::IoCancelled&) {
+    } catch (const DenyTCPConnection&) {
+      continue;
+    } catch (const userver::engine::io::IoCancelled& e) {
       break;
     } catch (const std::exception& ex) {
       LOG_ERROR() << "can't accept connection: " << ex;
@@ -54,7 +56,9 @@ void TCPServer::Stop() {
 void TCPServer::AcceptConnection(engine::io::Socket& listen_sock, engine::TaskProcessor& cli_tp) {
   engine::io::Socket connSock = listen_sock.Accept({});
   connSock.SetOption(IPPROTO_TCP, TCP_NODELAY, 1);
-  LOG_DEBUG() << "New connection " << fmt::to_string(connSock.Getsockname());
+#if defined(DEBUG)
+  LOG_DEBUG() << "New connection from " << fmt::to_string(connSock.Getpeername());
+#endif
   auto connection = makeConnection(std::move(connSock));
   onNewConnection(connection);
   connection->Start(cli_tp, connection);
@@ -64,6 +68,13 @@ void TCPServer::onNewConnection(std::shared_ptr<TCPConnection>& connection) {
   int fd = connection->Fd();
   if ((int)connections.size() < fd + 1) connections.resize(fd + 1);
   connections[fd] = connection;
+}
+
+TCPConnection::~TCPConnection()
+{
+#if defined(DEBUG)
+  LOG_DEBUG() << "Connection closed or released";
+#endif
 }
 
 }  // namespace unetwork

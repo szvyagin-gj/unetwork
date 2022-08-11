@@ -3,12 +3,18 @@
 #include <unetwork/tcp_server.h>
 #include <userver/server/http/http_method.hpp>
 #include <userver/server/http/http_status.hpp>
+#include <userver/crypto/certificate.hpp>
+#include <userver/crypto/private_key.hpp>
 
 #include <atomic>
 #include <exception>
 #include <span>
 #include <unordered_map>
 #include <functional>
+
+namespace unetwork {
+class IoBase;
+};
 
 namespace unetwork::util {
 struct string_hash {
@@ -65,7 +71,7 @@ class HttpConnection final : public TCPConnection {
   void Stop() override;
 
   // stop handling HTTP requests and return connection socket without closing
-  userver::engine::io::Socket Detach();
+  std::unique_ptr<IoBase> Release();
 
   class HttpConnectionImpl;
 
@@ -77,6 +83,13 @@ class HttpServer : public TCPServer {
  public:
   struct Config {
     bool allow_encoding = true;
+    struct TlsConfig
+    {
+      userver::crypto::Certificate cert;
+      userver::crypto::PrivateKey  key;
+    };
+
+    std::optional<TlsConfig> tls;
   };
 
   HttpServer(const ComponentConfig& component_config, const ComponentContext& component_context);

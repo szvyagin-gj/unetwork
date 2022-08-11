@@ -19,20 +19,27 @@ using userver::components::ComponentContext;
 class TCPConnection {
  public:
   TCPConnection(userver::engine::io::Socket&& conn_sock)
-      : socket(std::move(conn_sock)) {}
-  virtual ~TCPConnection() = default;
+      : socket(std::move(conn_sock)), fd(socket.Fd()), peername(socket.Getpeername()) {}
+  virtual ~TCPConnection();
 
   virtual void Start(userver::engine::TaskProcessor& tp,
                      std::shared_ptr<TCPConnection> self) = 0;
   virtual void Stop() = 0;
 
-  int Fd() const { return socket.Fd(); }
-  const userver::engine::io::Sockaddr& RemoteAddr() {
-    return socket.Getpeername();
+  int Fd() const { return fd; }
+  const userver::engine::io::Sockaddr& RemoteAddr() const {
+    return peername;
   }
 
  protected:
   userver::engine::io::Socket socket;
+  int fd;
+  userver::engine::io::Sockaddr peername;
+};
+
+class DenyTCPConnection : public userver::engine::io::IoException {
+ public:
+  using userver::engine::io::IoException::IoException;
 };
 
 class TCPServer {
