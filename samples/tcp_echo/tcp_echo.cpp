@@ -33,7 +33,6 @@ class TCPEchoConnection final : public unetwork::TCPConnection {
   size_t echoBufSize;
 
   engine::Task readTask;
-  engine::Task writeTask;
 
   using Packet = std::vector<std::byte>;
 
@@ -45,6 +44,10 @@ class TCPEchoConnection final : public unetwork::TCPConnection {
       LOG_INFO() << "Connection closed. Exit read coro";
       producer.Push({});
     });
+
+    auto writeTask =
+        engine::CriticalAsyncNoSpan(userver::engine::current_task::GetTaskProcessor(),
+                                    &TCPEchoConnection::WriteTaskCoro, this, queue->GetConsumer());
 
     Packet readData;
     while (!engine::current_task::ShouldCancel()) {
@@ -67,7 +70,7 @@ class TCPEchoConnection final : public unetwork::TCPConnection {
     }
   }
 
-  void WriteTaskCoro(Queue::Consumer& consumer) {
+  void WriteTaskCoro(Queue::Consumer consumer) {
     utils::FastScopeGuard onExit(
         [&]() noexcept { LOG_INFO() << "Connection closed. Exit write coro"; });
     Packet writeData;
@@ -90,31 +93,19 @@ class TCPEchoConnection final : public unetwork::TCPConnection {
     }
   }
 
-  void Start(engine::TaskProcessor& tp,
-             std::shared_ptr<TCPConnection> self) override {
+  void Start(engine::TaskProcessor& tp, std::shared_ptr<TCPConnection> self) override {
     queue = Queue::Create(1);
     readTask = engine::CriticalAsyncNoSpan(
         tp,
         [self, this](Queue::Producer&& producer) {
-          utils::ScopeGuard cleanup(
-              [this] { std::move(this->readTask).Detach(); });
+          utils::ScopeGuard cleanup([this] { std::move(this->readTask).Detach(); });
           this->ReadTaskCoro(producer);
         },
         queue->GetProducer());
-
-    writeTask = engine::CriticalAsyncNoSpan(
-        tp,
-        [self, this](Queue::Consumer&& consumer) {
-          utils::ScopeGuard cleanup(
-              [this] { std::move(this->writeTask).Detach(); });
-          this->WriteTaskCoro(consumer);
-        },
-        queue->GetConsumer());
   }
 
   void Stop() override {
     readTask.RequestCancel();
-    writeTask.RequestCancel();
   }
 };
 

@@ -8,6 +8,7 @@
 #include <userver/os_signals/component.hpp>
 #include <userver/utils/daemon_run.hpp>
 #include <userver/utils/async.hpp>
+#include <userver/concurrent/background_task_storage.hpp>
 
 #include <unetwork/websocket_server.h>
 
@@ -42,11 +43,17 @@ class ServiceComponent final : public components::LoggableComponentBase,
 
  private:
 
-  virtual void onNewWSConnection(std::shared_ptr<websocket::WebSocketConnection> connection) {
+  void onNewWSConnection(std::shared_ptr<websocket::WebSocketConnection> connection) override {
     LOG_INFO() << "New websocket connection from " << connection->RemoteAddr();
-    utils::Async("ws-echo", RunEchoCoro, connection).Detach();
+    bts.AsyncDetach("ws-echo", &RunEchoCoro, connection);
   }
 
+  void OnAllComponentsAreStopping() override
+  {
+    bts.CancelAndWait();
+  }
+
+  userver::concurrent::BackgroundTaskStorage bts;
 };
 
 int main(int argc, char* argv[]) {

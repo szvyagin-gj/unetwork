@@ -41,7 +41,6 @@ class WebSocketConnectionImpl : public WebSocketConnection {
   std::shared_ptr<OutboxMessageQueue> outbox;
   OutboxMessageQueue::Producer  outboxProducer;
   userver::engine::Task readTask;
-  userver::engine::Task writeTask;
   http::Headers headers;
   const engine::io::Sockaddr remoteAddr;
 
@@ -65,7 +64,7 @@ class WebSocketConnectionImpl : public WebSocketConnection {
   }
 
   void ReadTaskCoro() {
-    userver::utils::FastScopeGuard cleanup([this]() noexcept { this->writeTask.RequestCancel(); });
+    auto writeTask = userver::utils::Async("ws-write", &WebSocketConnectionImpl::WriteTaskCoro, this);
 
     FrameParserState frame;
     InboxMessageQueue::Producer producer = inbox->GetProducer();
@@ -143,12 +142,6 @@ class WebSocketConnectionImpl : public WebSocketConnection {
           [this]() noexcept { std::move(this->readTask).Detach(); });
       this->ReadTaskCoro();
     });
-
-    writeTask = userver::utils::Async("ws-write", [self, this] {
-      userver::utils::FastScopeGuard cleanup(
-          [this]() noexcept { std::move(this->writeTask).Detach(); });
-      this->WriteTaskCoro();
-    });
   }
 
   void SendExtended(MessageExtended&& message)
@@ -158,7 +151,6 @@ class WebSocketConnectionImpl : public WebSocketConnection {
 
   void Stop() {
     readTask.RequestCancel();
-    writeTask.RequestCancel();
   }
 
   InboxMessageQueue::Consumer GetMessagesConsumer() override { return inbox->GetConsumer(); }
