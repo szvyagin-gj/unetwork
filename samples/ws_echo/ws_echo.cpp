@@ -29,6 +29,7 @@ void RunEchoCoro(std::shared_ptr<websocket::WebSocketConnection> connection) {
       break;
     }
   }
+  connection->Close((int)websocket::CloseStatus::kGoingAway);
 }
 
 class ServiceComponent final : public components::LoggableComponentBase,

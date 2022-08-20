@@ -163,7 +163,10 @@ class WebSocketConnectionImpl : public WebSocketConnection {
     SendExtended(std::move(mext));
   }
 
-  void Close(CloseStatusInt status_code) override { Send(CloseMessage(status_code)); }
+  void Close(CloseStatusInt status_code) override {
+    Send(CloseMessage(status_code));
+    Stop();
+  }
 
   const userver::engine::io::Sockaddr& RemoteAddr() const override
   {
