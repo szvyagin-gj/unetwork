@@ -260,14 +260,13 @@ void HttpServer::ProcessSocket(engine::io::Socket&& sock) {
         } else {
           SendExactly(io.get(), serialize_response(response, curRequest, config.allow_encoding),
                       {});
-          if (!response.keepalive) io.reset();
           if (response.post_send_cb) response.post_send_cb();
-
           if (response.upgrade_connection)
           {
             response.upgrade_connection(std::move(io));
             return;
           }
+          if (!response.keepalive) return;
         }
       }
 
