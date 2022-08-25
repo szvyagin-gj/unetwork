@@ -47,11 +47,8 @@ struct Response {
   Headers headers;
   std::vector<std::byte> content;
   std::string_view content_type;
-
   bool keepalive = false;
-
   std::function<void()> post_send_cb;
-
   std::function<void(std::unique_ptr<userver::engine::io::RwBase>)> upgrade_connection;
 };
 
