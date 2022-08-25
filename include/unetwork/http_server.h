@@ -1,20 +1,16 @@
 #pragma once
 
-#include <unetwork/tcp_server.h>
 #include <userver/server/http/http_method.hpp>
 #include <userver/server/http/http_status.hpp>
 #include <userver/crypto/certificate.hpp>
 #include <userver/crypto/private_key.hpp>
+#include <userver/components/tcp_acceptor_base.hpp>
 
 #include <atomic>
 #include <exception>
 #include <span>
 #include <unordered_map>
 #include <functional>
-
-namespace unetwork {
-class IoBase;
-};
 
 namespace unetwork::util {
 struct string_hash {
@@ -42,6 +38,7 @@ struct Request {
   Headers headers;
   std::vector<std::byte> content;
 
+  const userver::engine::io::Sockaddr* client_address;
   bool keepalive = false;
 };
 
@@ -54,6 +51,8 @@ struct Response {
   bool keepalive = false;
 
   std::function<void()> post_send_cb;
+
+  std::function<void(std::unique_ptr<userver::engine::io::RwBase>)> upgrade_connection;
 };
 
 struct HttpStatusException : public std::exception {
@@ -61,25 +60,7 @@ struct HttpStatusException : public std::exception {
   HttpStatusException(HttpStatus s) : status(s) {}
 };
 
-class HttpServer;
-
-class HttpConnection final : public TCPConnection {
- public:
-  HttpConnection(userver::engine::io::Socket&& conn_sock, HttpServer* owner);
-
-  void Start(userver::engine::TaskProcessor& tp, std::shared_ptr<TCPConnection> self) override;
-  void Stop() override;
-
-  // stop handling HTTP requests and return connection socket without closing
-  std::unique_ptr<IoBase> Release();
-
-  class HttpConnectionImpl;
-
- private:
-  std::unique_ptr<HttpConnectionImpl> impl;
-};
-
-class HttpServer : public TCPServer {
+class HttpServer : public userver::components::TcpAcceptorBase {
  public:
   struct Config {
     bool allow_encoding = true;
@@ -92,16 +73,8 @@ class HttpServer : public TCPServer {
     std::optional<TlsConfig> tls;
   };
 
-  HttpServer(const ComponentConfig& component_config, const ComponentContext& component_context);
-
-  ~HttpServer() {
-    // Connections can't operate without http sever and must be stopped.
-    // It is not required for generic TCP server where connections do not bound
-    // to their server i.e. server can be destroied while connections are live
-    Stop();
-  }
-
-  virtual Response HandleRequest(const Request& request, HttpConnection* connection) = 0;
+  HttpServer(const userver::components::ComponentConfig& component_config,
+             const userver::components::ComponentContext& component_context);
 
   enum class OperationMode
   {
@@ -112,11 +85,12 @@ class HttpServer : public TCPServer {
   void SetOperationMode(OperationMode opmode);
 
  private:
-  std::shared_ptr<TCPConnection> makeConnection(userver::engine::io::Socket&&) override;
+  virtual Response HandleRequest(const Request& request) = 0;
+
+  void ProcessSocket(userver::engine::io::Socket&& sock) override final;
 
   Config config;
   std::atomic<OperationMode> operation_mode = OperationMode::Normal;
-  friend class HttpConnection::HttpConnectionImpl;
 };
 
 class SimpleHttpServer : public HttpServer {
@@ -125,14 +99,14 @@ class SimpleHttpServer : public HttpServer {
     std::string content_type = "text/plain";
   };
 
-  SimpleHttpServer(const ComponentConfig& component_config,
-                   const ComponentContext& component_context);
+  SimpleHttpServer(const userver::components::ComponentConfig& component_config,
+                   const userver::components::ComponentContext& component_context);
 
  protected:
   virtual std::string OnRequest(const Request& request) = 0;
 
  private:
-  Response HandleRequest(const Request& request, HttpConnection* /*connection*/) override final {
+  Response HandleRequest(const Request& request) override final {
     std::string respBody = OnRequest(request);
     Response resp;
     resp.keepalive = request.keepalive;

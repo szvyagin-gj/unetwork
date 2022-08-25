@@ -12,8 +12,6 @@
 #include <http/content_encoder.h>
 #include <utils.h>
 
-#include <unetwork/io_wrapper.h>
-
 namespace unetwork::http {
 
 using namespace userver;
@@ -204,137 +202,78 @@ struct ParserState {
 
 }  // namespace
 
-class HttpConnection::HttpConnectionImpl {
- private:
-  HttpServer* handler;
-  HttpConnection* connection;
-  engine::Task readTask;
+HttpServer::HttpServer(const components::ComponentConfig& component_config,
+                       const components::ComponentContext& component_context)
+    : userver::components::TcpAcceptorBase(component_config, component_context), config(component_config.As<Config>()) {}
+
+void HttpServer::ProcessSocket(engine::io::Socket&& sock) {
+  std::unique_ptr<engine::io::RwBase> io;
+  engine::io::Sockaddr remoteAddr = sock.Getpeername();
+  if (!config.tls.has_value())
+    io = std::make_unique<engine::io::Socket>(std::move(sock));
+  else {
+    HttpServer::Config::TlsConfig const& tlsConf = config.tls.value();
+    io.reset(new engine::io::TlsWrapper(engine::io::TlsWrapper::StartTlsServer(
+        std::move(sock), tlsConf.cert, tlsConf.key, engine::Deadline{}, {})));
+  }
+
+  std::array<std::byte, 512> buf;
   ParserState parserState;
+  parserState.curRequest.client_address = &remoteAddr;
 
-  void OnRequest(std::unique_ptr<IoBase>& io) {
-    Response response;
-    std::optional<HttpStatus> errorStatus;
+  while (!engine::current_task::ShouldCancel()) {
+    size_t nread = io->ReadSome(buf.data(), buf.size(), {});
+    if (nread > 0) {
+      if (operation_mode == HttpServer::OperationMode::Throttled) {
+        [[maybe_unused]] auto s = io->WriteAll(throttled_answer.data(), throttled_answer.size(), {});
+        return;
+      }
 
-    Request curRequest = std::move(parserState.curRequest);
-    try {
-      response = handler->HandleRequest(curRequest, connection);
-    } catch (HttpStatusException const& e) {
-      errorStatus = e.status;
-      LOG_INFO() << "Status exception " << ToString(e.status);
-    } catch (std::exception const& e) {
-      LOG_WARNING() << "Exception in http handler " << e;
-      errorStatus = HttpStatus::kInternalServerError;
-    }
+      http_parser_execute(&parserState.parser, &parserState.settings, (const char*)buf.data(),
+                          nread);
+      if (parserState.parser.http_errno != 0) {
+        LOG_WARNING() << "bad data in http request ";
+        return;
+      }
 
-    if (errorStatus.has_value()) {
-      std::vector<char> respData = status_response(errorStatus.value());
-      SendExactly(io.get(), std::as_bytes(std::span(respData)), {});
-      io->Close();
-    } else {
-      SendExactly(io.get(), serialize_response(response, curRequest, handler->config.allow_encoding), {});
-      if (!response.keepalive) io->Close();
-      if (response.post_send_cb)
-        response.post_send_cb();
-    }
-  }
+      if (parserState.complete) {
+        parserState.complete = false;
 
-  void ReadTaskCoro() {
-    std::array<std::byte, 512> buf;
+        Response response;
+        std::optional<HttpStatus> errorStatus;
 
-    try {
-      while (!engine::current_task::ShouldCancel()) {
-        size_t nread = io->ReadSome(buf.data(), buf.size(), {});
-        if (nread > 0) {
-          if (handler->operation_mode == HttpServer::OperationMode::Throttled) {
-            [[maybe_unused]] auto s =
-                io->SendAll(throttled_answer.data(), throttled_answer.size(), {});
+        Request curRequest = std::move(parserState.curRequest);
+        try {
+          response = HandleRequest(curRequest);
+        } catch (HttpStatusException const& e) {
+          errorStatus = e.status;
+          LOG_INFO() << "Status exception " << ToString(e.status);
+        } catch (std::exception const& e) {
+          LOG_WARNING() << "Exception in http handler " << e;
+          errorStatus = HttpStatus::kInternalServerError;
+        }
+
+        if (errorStatus.has_value()) {
+          std::vector<char> respData = status_response(errorStatus.value());
+          SendExactly(io.get(), std::as_bytes(std::span(respData)), {});
+          io.reset();
+        } else {
+          SendExactly(io.get(), serialize_response(response, curRequest, config.allow_encoding),
+                      {});
+          if (!response.keepalive) io.reset();
+          if (response.post_send_cb) response.post_send_cb();
+
+          if (response.upgrade_connection)
+          {
+            response.upgrade_connection(std::move(io));
             return;
           }
-
-          http_parser_execute(&parserState.parser, &parserState.settings, (const char*)buf.data(),
-                              nread);
-          if (parserState.parser.http_errno != 0) {
-            // TODO: dump broken request
-            LOG_WARNING() << "bad data in http request ";
-            return;
-          }
-
-          if (parserState.complete) {
-            OnRequest(io);
-            parserState.complete = false;
-          }
-
-        } else if (nread == 0)  // connection closed
-          return;
+        }
       }
-    } catch (engine::io::IoException& e) {
-    }
+
+    } else if (nread == 0)  // connection closed
+      return;
   }
-
- public:
-  HttpConnectionImpl(HttpServer* server, HttpConnection* conn_interface) : handler(server), connection(conn_interface) {}
-
-  void Start(engine::TaskProcessor& tp, std::shared_ptr<TCPConnection> self,
-             engine::io::Socket&& socket) {
-
-    if (!handler->config.tls.has_value())
-      io = std::make_unique<SocketWrapper>(std::move(socket));
-    else
-    {
-      auto const& tlsConf = handler->config.tls.value();
-      try {
-        io = std::make_unique<TlsWrapper>(std::move(socket), tlsConf.cert, tlsConf.key,
-                                          engine::Deadline{},
-                                          std::vector<userver::crypto::Certificate>{});
-      } catch (engine::io::TlsException& e) {
-        throw DenyTCPConnection(e.what());
-      }
-    }
-
-    readTask = utils::Async(tp, "http-connection", [self, this]() mutable {
-      utils::FastScopeGuard cleanup([this]() noexcept { std::move(this->readTask).Detach(); });
-      this->ReadTaskCoro();
-    });
-    selfWeak = self;
-  }
-
-  void Stop() { readTask.RequestCancel(); }
-
-  void SyncStop() {
-    Stop();
-    readTask.BlockingWait();
-  }
-
-  std::unique_ptr<unetwork::IoBase> io;
-  std::weak_ptr<TCPConnection> selfWeak;
-};
-
-HttpConnection::HttpConnection(engine::io::Socket&& conn_sock, HttpServer* owner)
-    : TCPConnection(std::move(conn_sock)), impl(new HttpConnectionImpl(owner, this)) {}
-
-void HttpConnection::Start(engine::TaskProcessor& tp, std::shared_ptr<TCPConnection> self) {
-  assert(socket.IsValid());
-  impl->Start(tp, self, std::move(socket));
-}
-
-void HttpConnection::Stop() { impl->Stop(); }
-
-std::unique_ptr<IoBase> HttpConnection::Release() {
-  // connection lifetime controlled by shared_ptr owned by coroutine.
-  // when coroutine stops connection is destroyed
-  if (auto lock = impl->selfWeak.lock()) {
-    impl->Stop();
-    return std::move(impl->io);
-  }
-  return {};
-}
-
-HttpServer::HttpServer(const ComponentConfig& component_config,
-                       const ComponentContext& component_context)
-    : TCPServer(component_config, component_context), config(component_config.As<Config>()) {}
-
-std::shared_ptr<TCPConnection> HttpServer::makeConnection(engine::io::Socket&& socket) {
-  return std::make_shared<HttpConnection>(std::move(socket), this);
 }
 
 void HttpServer::SetOperationMode(HttpServer::OperationMode opmode) {
@@ -345,8 +284,8 @@ void HttpServer::SetOperationMode(HttpServer::OperationMode opmode) {
              << (opmode == OperationMode::Throttled ? "throttled" : "normal");
 }
 
-SimpleHttpServer::SimpleHttpServer(const ComponentConfig& component_config,
-                                   const ComponentContext& component_context)
+SimpleHttpServer::SimpleHttpServer(const components::ComponentConfig& component_config,
+                                   const components::ComponentContext& component_context)
     : HttpServer(component_config, component_context), config(component_config.As<Config>()) {}
 
 }  // namespace unetwork::http

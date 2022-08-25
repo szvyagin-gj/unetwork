@@ -14,16 +14,13 @@ using namespace userver;
 using namespace unetwork;
 using namespace std::chrono_literals;
 
-class HelloServiceComponent final : public userver::components::LoggableComponentBase,
-                                    private unetwork::http::SimpleHttpServer {
+class HelloServiceComponent final : public unetwork::http::SimpleHttpServer {
  public:
   static constexpr std::string_view kName = "http-hello-server";
 
   HelloServiceComponent(const userver::components::ComponentConfig& component_config,
                         const userver::components::ComponentContext& component_context)
-      : userver::components::LoggableComponentBase(component_config, component_context),
-        unetwork::http::SimpleHttpServer(component_config, component_context) {
-    //SetOperationMode(unetwork::http::HttpServer::OperationMode::Normal);
+      : unetwork::http::SimpleHttpServer(component_config, component_context) {
   }
 
   std::string OnRequest(const unetwork::http::Request& request) override {

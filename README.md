@@ -1,6 +1,8 @@
-# unetwork
+## About
 
-Network library for [userver framework](https://github.com/userver-framework/userver)
+Sandbox library for [userver framework](https://github.com/userver-framework/userver)
+
+This library is not for production usage, it just show how one can use stackfull coroutines to write simple servers.
 
 ## Download
 
@@ -11,3 +13,4 @@ Network library for [userver framework](https://github.com/userver-framework/use
 
 It is simple. You need to run only one command
 `mkdir build && cd build && cmake .. && make`
+

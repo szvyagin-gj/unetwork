@@ -1,7 +1,6 @@
 #pragma once
 #include <unetwork/websocket_server.h>
-#include <unetwork/io_wrapper.h>
-#include <userver/engine/io/socket.hpp>
+#include <userver/engine/io/common.hpp>
 
 #include <span>
 #include <string>
@@ -32,6 +31,6 @@ struct FrameParserState {
   std::vector<std::byte> payload;
 };
 
-CloseStatusInt ReadWSFrame(FrameParserState& frame, IoBase* io, unsigned max_payload_size);
+CloseStatusInt ReadWSFrame(FrameParserState& frame, userver::engine::io::ReadableBase* io, unsigned max_payload_size);
 
 }  // namespace unetwork::websocket

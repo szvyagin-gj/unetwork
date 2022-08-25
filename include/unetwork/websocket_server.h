@@ -28,6 +28,8 @@ struct Message {
   bool closed = false;
 };
 
+class WebSocketConnectionImpl;
+
 using InboxMessageQueue = userver::concurrent::SpscQueue<Message>;
 
 class WebSocketConnection {
@@ -40,7 +42,7 @@ class WebSocketConnection {
   virtual const http::Headers& HandshakeHTTPHeaders() const = 0;
 };
 
-class WebSocketServer : private http::HttpServer {
+class WebSocketServer : public http::HttpServer {
  public:
   struct Config {
     bool debug_logging = false;
@@ -48,15 +50,14 @@ class WebSocketServer : private http::HttpServer {
     unsigned fragment_size = 65536; // 0 - do not fragment
   };
 
-  WebSocketServer(const ComponentConfig& component_config,
-                  const ComponentContext& component_context);
+  WebSocketServer(const userver::components::ComponentConfig& component_config,
+                  const userver::components::ComponentContext& component_context);
 
  private:
-  virtual void onNewWSConnection(std::shared_ptr<WebSocketConnection> connection) = 0;
+  void ProcessConnection(std::shared_ptr<WebSocketConnectionImpl> conn);
+  http::Response HandleRequest(const http::Request& request) override final;
 
-  http::Response HandleRequest(const http::Request& request,
-                               http::HttpConnection* connection) override final;
-  void UpgradeConnection(http::HttpConnection* connection, http::Headers&& headers);
+  virtual void onNewWSConnection(std::shared_ptr<WebSocketConnection> connection) = 0;
 
   Config config;
 };

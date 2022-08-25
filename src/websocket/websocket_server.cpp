@@ -29,7 +29,7 @@ static Message DataMessage(std::vector<std::byte>&& payload, bool is_text) {
 
 class WebSocketConnectionImpl : public WebSocketConnection {
  private:
-  std::unique_ptr<IoBase> io;
+  std::unique_ptr<engine::io::RwBase> io;
 
   struct MessageExtended : Message {
     bool ping = false;
@@ -40,22 +40,21 @@ class WebSocketConnectionImpl : public WebSocketConnection {
   std::shared_ptr<InboxMessageQueue> inbox;
   std::shared_ptr<OutboxMessageQueue> outbox;
   OutboxMessageQueue::Producer  outboxProducer;
-  userver::engine::Task readTask;
   http::Headers headers;
   const engine::io::Sockaddr remoteAddr;
 
   WebSocketServer::Config config;
 
  public:
-  WebSocketConnectionImpl(std::unique_ptr<IoBase> io_, http::Headers&& h,
-                          engine::io::Sockaddr&& remote_addr,
+  WebSocketConnectionImpl(std::unique_ptr<engine::io::RwBase> io_, http::Headers&& h,
+                          const engine::io::Sockaddr& remote_addr,
                           const WebSocketServer::Config& server_config)
       : io(std::move(io_)),
         inbox(InboxMessageQueue::Create(3)),
         outbox(OutboxMessageQueue::Create(3)),
         outboxProducer(outbox->GetMultiProducer()),
         headers(std::move(h)),
-        remoteAddr(std::move(remote_addr)),
+        remoteAddr(remote_addr),
         config(server_config) {}
 
   ~WebSocketConnectionImpl()
@@ -64,8 +63,6 @@ class WebSocketConnectionImpl : public WebSocketConnection {
   }
 
   void ReadTaskCoro() {
-    auto writeTask = userver::utils::Async("ws-write", &WebSocketConnectionImpl::WriteTaskCoro, this);
-
     FrameParserState frame;
     InboxMessageQueue::Producer producer = inbox->GetProducer();
     try {
@@ -136,21 +133,9 @@ class WebSocketConnectionImpl : public WebSocketConnection {
     }
   }
 
-  void Start(std::shared_ptr<WebSocketConnection> self) {
-    readTask = userver::utils::Async("ws-read", [self, this] {
-      userver::utils::FastScopeGuard cleanup(
-          [this]() noexcept { std::move(this->readTask).Detach(); });
-      this->ReadTaskCoro();
-    });
-  }
-
   void SendExtended(MessageExtended&& message)
   {
     outboxProducer.Push(std::make_unique<MessageExtended>(std::move(message)), {});
-  }
-
-  void Stop() {
-    readTask.RequestCancel();
   }
 
   InboxMessageQueue::Consumer GetMessagesConsumer() override { return inbox->GetConsumer(); }
@@ -165,7 +150,6 @@ class WebSocketConnectionImpl : public WebSocketConnection {
 
   void Close(CloseStatusInt status_code) override {
     Send(CloseMessage(status_code));
-    Stop();
   }
 
   const userver::engine::io::Sockaddr& RemoteAddr() const override
@@ -176,21 +160,19 @@ class WebSocketConnectionImpl : public WebSocketConnection {
   const http::Headers& HandshakeHTTPHeaders() const override { return headers; }
 };
 
-WebSocketServer::WebSocketServer(const ComponentConfig& component_config,
-                                 const ComponentContext& component_context)
+void WebSocketServer::ProcessConnection(std::shared_ptr<WebSocketConnectionImpl> conn)
+{
+    auto writeTask = userver::utils::Async("ws-write", &WebSocketConnectionImpl::WriteTaskCoro, conn);
+    onNewWSConnection(conn);
+    conn->ReadTaskCoro();
+}
+
+WebSocketServer::WebSocketServer(const components::ComponentConfig& component_config,
+                                 const components::ComponentContext& component_context)
     : http::HttpServer(component_config, component_context),
       config(component_config.As<Config>()) {}
 
-void WebSocketServer::UpgradeConnection(http::HttpConnection* connection, http::Headers&& headers) {
-  engine::io::Sockaddr remoteAddr = connection->RemoteAddr();
-  std::shared_ptr<WebSocketConnectionImpl> wsConnection = std::make_shared<WebSocketConnectionImpl>(
-      connection->Release(), std::move(headers), std::move(remoteAddr), config);
-  wsConnection->Start(wsConnection);
-  onNewWSConnection(wsConnection);
-}
-
-http::Response WebSocketServer::HandleRequest(const http::Request& request,
-                                              http::HttpConnection* connection) {
+http::Response WebSocketServer::HandleRequest(const http::Request& request) {
   if (!TestHeaderVal(request.headers, "Upgrade", "websocket") ||
       !TestHeaderVal(request.headers, "Connection", "Upgrade"))
     throw http::HttpStatusException(http::HttpStatus::kBadRequest);
@@ -205,9 +187,12 @@ http::Response WebSocketServer::HandleRequest(const http::Request& request,
   resp.headers["Sec-WebSocket-Accept"] = WebsocketSecAnswer(secWebsocketKey);
   resp.keepalive = true;
 
-  resp.post_send_cb = [this, connection, headers = std::move(request.headers)]() mutable {
-    this->UpgradeConnection(connection, std::move(headers));
-  };
+  resp.upgrade_connection =
+      [this, headers = std::move(request.headers),
+       remoteAddr = request.client_address](std::unique_ptr<engine::io::RwBase> io) mutable {
+        this->ProcessConnection(std::make_shared<WebSocketConnectionImpl>(
+            std::move(io), std::move(headers), *remoteAddr, this->config));
+      };
   return resp;
 }
 

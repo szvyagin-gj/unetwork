@@ -18,6 +18,5 @@ macro(build_sample)
     ${OUT_DIR}/dynamic_config_fallback.json)
 endmacro()
 
-add_subdirectory(tcp_echo)
 add_subdirectory(http_hello)
 add_subdirectory(ws_echo)

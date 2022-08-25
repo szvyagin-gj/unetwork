@@ -2,13 +2,13 @@
 #include <userver/components/manager_controller_component.hpp>
 #include <userver/components/statistics_storage.hpp>
 #include <userver/components/tracer.hpp>
+#include <userver/concurrent/background_task_storage.hpp>
 #include <userver/dynamic_config/fallbacks/component.hpp>
 #include <userver/dynamic_config/storage/component.hpp>
 #include <userver/logging/component.hpp>
 #include <userver/os_signals/component.hpp>
-#include <userver/utils/daemon_run.hpp>
 #include <userver/utils/async.hpp>
-#include <userver/concurrent/background_task_storage.hpp>
+#include <userver/utils/daemon_run.hpp>
 
 #include <unetwork/websocket_server.h>
 
@@ -32,26 +32,18 @@ void RunEchoCoro(std::shared_ptr<websocket::WebSocketConnection> connection) {
   connection->Close((int)websocket::CloseStatus::kGoingAway);
 }
 
-class ServiceComponent final : public components::LoggableComponentBase,
-                               private websocket::WebSocketServer {
+class ServiceComponent final : public websocket::WebSocketServer {
  public:
   static constexpr std::string_view kName = "ws-echo-server";
 
   ServiceComponent(const components::ComponentConfig& component_config,
                    const components::ComponentContext& component_context)
-      : components::LoggableComponentBase(component_config, component_context),
-        websocket::WebSocketServer(component_config, component_context) {}
+      : websocket::WebSocketServer(component_config, component_context) {}
 
  private:
-
   void onNewWSConnection(std::shared_ptr<websocket::WebSocketConnection> connection) override {
     LOG_INFO() << "New websocket connection from " << connection->RemoteAddr();
     bts.AsyncDetach("ws-echo", &RunEchoCoro, connection);
-  }
-
-  void OnAllComponentsAreStopping() override
-  {
-    bts.CancelAndWait();
   }
 
   userver::concurrent::BackgroundTaskStorage bts;

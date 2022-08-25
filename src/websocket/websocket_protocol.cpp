@@ -157,8 +157,8 @@ std::string WebsocketSecAnswer(std::string_view sec_key) {
       std::string_view((const char*)webSocketRespKeySHA1, 20));
 }
 
-CloseStatusInt ReadWSFrame(FrameParserState& frame, IoBase* io,
-                           unsigned max_payload_size) {
+CloseStatusInt ReadWSFrame(FrameParserState& frame, userver::engine::io::ReadableBase* io, unsigned max_payload_size)
+{
   WSHeader hdr;
   RecvExactly(io, std::as_writable_bytes(std::span{&hdr, 1}), {});
   if (userver::engine::current_task::ShouldCancel()) return (CloseStatusInt)CloseStatus::kGoingAway;
